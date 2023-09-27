@@ -1,7 +1,6 @@
 import { Telegraf } from 'telegraf'
-import { extract, FeedData, FeedEntry } from '@extractus/feed-extractor'
-import { BunFile } from 'bun'
-import { privateEncrypt } from 'crypto'
+import { extract, FeedEntry } from '@extractus/feed-extractor'
+import { SentEventsStorage } from './helper'
 
 class TelegramSender {
     bot: Telegraf
@@ -45,50 +44,14 @@ class TelegramSender {
     }
 }
 
-async function md5(something: any): Promise<string> {
-    const hasher = new Bun.CryptoHasher("sha256")
-    hasher.update(JSON.stringify(something))
-    return hasher.digest("hex").toString()
-}
-
-class SentEventsStorage {
-    filename: string
-    entries: string[]
-
-    constructor(filename: string = "sent_events") {
-        let path = Bun.main.split('/')
-        path.pop()
-        this.filename = `${path.join('/')}/${filename}`
-        console.log(`db: ${this.filename}`)
-        this.entries = []
-    }
-
-    async saveEvents(entries: FeedEntry[]): Promise<void> {
-        let current_entries: string[] = await Promise.all(entries.map(async entry => md5(entry)))
-        this.entries = [...this.entries, ...current_entries].slice(-100)
-        Bun.write(this.filename, this.entries.join('\n'))
-    }
-
-    async loadEvents() {
-        let file = Bun.file(this.filename)
-        let text = await file.exists() ? await file.text() : ''
-        this.entries = text.split('\n')
-    }
-
-    async filterOldEvents(feed: FeedData): Promise<FeedEntry[]> {
-        const events = await Promise.all(feed.entries?.map(async (entry: FeedEntry) => [entry, await md5(entry)]))
-        return events.filter((event) => !this.entries.includes(event[1])).map((event) => event[0])
-    }
-}
-
 const RSS_URLS = [
     "https://www.cultura.sc.gov.br/programacao/espacos/tac?format=feed&type=rss",
 ]
 const TELEGRAM_TOKEN = process.env.VAMODALHE_TOKEN
-const CHANNEL_ID = "@dalhe_cultura_floripa"
+const CHANNEL_ID = process.env.VAMODALHE_CHANNEL
 
 async function main(): Promise<void> {
-    if (TELEGRAM_TOKEN == undefined) {
+    if (TELEGRAM_TOKEN == undefined || CHANNEL_ID == undefined) {
         console.log("Invalid token!")
         return
     }
@@ -96,7 +59,7 @@ async function main(): Promise<void> {
     await storage.loadEvents()
 
     for(const url of RSS_URLS) {
-    let unsentEvents = await storage.filterOldEvents(await extract(url))
+    let unsentEvents = await storage.filterOldEvents((await extract(url)).entries)
         if (unsentEvents.length > 0) {
             let sender = new TelegramSender(TELEGRAM_TOKEN, CHANNEL_ID)
             sender.sendMessages(unsentEvents)
